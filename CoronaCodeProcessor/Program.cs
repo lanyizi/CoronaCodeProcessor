@@ -8,28 +8,24 @@ var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName))
 // fully reprocess everything if:
 // - filter changed
 // - last commit not in git log (which indicates a possible force push)
-var rawLogs = await GetGitLog();
-foreach (var c in rawLogs)
-{
-    // populate email to author dict
-    if (!config.NameByEmail.ContainsKey(c.Author))
-    {
-        config.NameByEmail[c.Author] = c.AuthorName;
-    }
-    if (!config.NameByEmail.ContainsKey(c.Committer))
-    {
-        config.NameByEmail[c.Committer] = c.CommitterName;
-    }
-}
-// save email to author dict
-await config.Save();
-
+await SyncSourceMasterBranch();
+var rawLogs = await GetLatestGitLog();
+await UpdateEmailTable();
 var commits = rawLogs
     .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
     .ToArray();
 var commitById = commits.ToDictionary(c => c.Id);
 
-async Task<RawCommit[]> GetGitLog()
+async Task SyncSourceMasterBranch()
+{
+    logger.Info("Syncing source master branch");
+    await RunSourceGit("checkout master");
+    await RunSourceGit("fetch");
+    await RunSourceGit("reset --hard origin/master");
+    logger.Info("Obtained latest changes from master");
+}
+
+async Task<RawCommit[]> GetLatestGitLog()
 {
     var formatString = "{ 'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b', 'author': '%ae', 'authorDate': '%aI', 'committer': '%ce', 'committerDate': '%cI', 'committerName': '%an' }"
     // we want to produce JSON, however if we are using quotes like normal JSON,
@@ -37,9 +33,9 @@ async Task<RawCommit[]> GetGitLog()
     // So we use a different character to represent quotes.
     // We replace it to 0x1F (Unit Separator), which is a control character that is unlikely to appear in commit messages.
     // We also replace { and } to 0x02 (Start of Text) and 0x03 (End of Text) respectively.
-    .Replace("{", "%02")
-    .Replace("}", "%03")
-    .Replace("'", "%1F");
+        .Replace("{", "%02")
+        .Replace("}", "%03")
+        .Replace("'", "%1F");
     var log = await RunSourceGit($"--no-pager log --reverse --format=\"{formatString}\"");
     // preprocess the log to replace the special characters back
     bool firstBracket = true;
@@ -81,6 +77,26 @@ async Task<RawCommit[]> GetGitLog()
     }
     logBuilder.Append(']');
     return JsonSerializer.Deserialize<RawCommit[]>(logBuilder.ToString())!;
+}
+
+async Task UpdateEmailTable()
+{
+    foreach (var c in rawLogs.Reverse())
+    {
+        // populate email to author dict
+        if (!config.NameByEmail.ContainsKey(c.Author))
+        {
+            config.NameByEmail[c.Author] = c.AuthorName;
+            logger.Info($"Added {c.AuthorName} to config");
+        }
+        if (!config.NameByEmail.ContainsKey(c.Committer))
+        {
+            config.NameByEmail[c.Committer] = c.CommitterName;
+            logger.Info($"Added {c.CommitterName} to config");
+        }
+    }
+    // save email to author dict
+    await config.Save();
 }
 
 async Task CreateCommit(Commit commit)
