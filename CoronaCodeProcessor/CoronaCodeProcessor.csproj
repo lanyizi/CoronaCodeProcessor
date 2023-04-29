@@ -20,6 +20,10 @@
   <ItemGroup>
     <PackageReference Include="NLog" Version="5.1.3" />
     <Using Include="NLog" />
+    <Using Include="System.Diagnostics" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Text" />
+    <Using Include="System.Text.Json" />
   </ItemGroup>
 
 </Project>
