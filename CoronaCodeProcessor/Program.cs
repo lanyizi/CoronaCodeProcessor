@@ -190,7 +190,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
     // copy files from source to target according to the include list
     await Task.Run(() =>
     {
-        var files = config.LastIncludeList.SelectMany(pattern => Directory.EnumerateFiles(config.SourceDirectory, pattern)).ToArray();
+        var files = config.LastIncludeList.SelectMany(pattern => FindFiles(config.SourceDirectory, pattern)).ToArray();
         foreach (var sourceFullName in files)
         {
             var relativeFileName = Path.GetRelativePath(config.SourceDirectory, sourceFullName);
@@ -228,6 +228,28 @@ async Task CreateTargetCommit(Commit sourceCommit)
     config.SourceCommitToTargetCommit[sourceCommit.Id] = targetCommit;
     config = config with { LastSourceCommit = sourceCommit.Id };
     await config.Save();
+}
+
+string[] FindFiles(string directory, string pattern)
+{
+    logger.Debug($"Searching files in {directory} with pattern {pattern}");
+    var wildcards = new[] { '*', '?' };
+    var wildcardIndex = pattern.IndexOfAny(wildcards);
+    if (wildcardIndex != -1)
+    {
+        var slashes = new[] { '/', '\\' };
+        var slashAfterWildcard = pattern.IndexOfAny(slashes, wildcardIndex);
+        if (slashAfterWildcard != -1)
+        {
+            // split pattern into three parts
+            var childPattern = pattern[(slashAfterWildcard + 1)..];
+            var directoryPattern = pattern[..slashAfterWildcard];
+            return Directory.EnumerateDirectories(directory, directoryPattern)
+                .SelectMany(d => FindFiles(d, childPattern))
+                .ToArray();
+        }
+    }
+    return Directory.GetFiles(directory, pattern).ToArray();
 }
 
 async Task RestartTargetGitBranch()
