@@ -78,11 +78,15 @@ async Task SyncSourceMasterBranch()
 
 async Task<RawCommit[]> GetLatestGitLog()
 {
-    const string format = "{ 'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b', 'author': '%ae', 'authorDate': '%aI', 'committer': '%ce', 'committerDate': '%cI', 'committerName': '%an' }";
+    const string format = @"{
+        'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b',
+        'author': '%ae', 'authorDate': '%aI', 'authorName': '%an',
+        'committer': '%ce', 'committerDate': '%cI', 'committerName': '%cn' 
+    }";
     const char startOfText = '\x02';
     const char endOfText = '\x03';
     const char unitSeparator = '\x1F';
-    var formatString = format
+    var formatString = System.Text.RegularExpressions.Regex.Replace(format, "\\s+", " ")
     // we want to produce JSON, however if we are using quotes like normal JSON,
     // and the commit message contains quotes, it will break the JSON format.
     // So we use a different character to represent quotes.
