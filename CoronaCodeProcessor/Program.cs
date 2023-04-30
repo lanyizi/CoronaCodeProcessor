@@ -1,6 +1,5 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
-
 var logger = LogManager.GetLogger("Main");
 Config config;
 try
@@ -337,7 +336,27 @@ record Config(
 
     public static async Task<Config> Load()
     {
-        return JsonSerializer.Deserialize<Config>(await File.ReadAllTextAsync(FileName), JsonOptions)!;
+        var loaded = JsonSerializer.Deserialize<Config>(await File.ReadAllTextAsync(FileName), JsonOptions)!;
+        static void CheckRequiredField(string? field, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(field))] string name = null!)
+        {
+            if (string.IsNullOrWhiteSpace(field))
+            {
+                throw new ArgumentException($"config field {name.Split('.').Last()} is required");
+            }
+        }
+        CheckRequiredField(loaded.SourceDirectory);
+        CheckRequiredField(loaded.DestinationDirectory);
+        CheckRequiredField(loaded.IncludeListFileName);
+        CheckRequiredField(loaded.LastCommitFileName);
+        // fix null fields
+        loaded = loaded with
+        {
+            SourceCommitToTargetCommit = loaded.SourceCommitToTargetCommit ?? new(),
+            NameByEmail = loaded.NameByEmail ?? new(),
+            LastSourceCommit = loaded.LastSourceCommit ?? string.Empty,
+            LastIncludeList = loaded.LastIncludeList ?? Array.Empty<string>(),
+        };
+        return loaded;
     }
 
     public Task Save()
