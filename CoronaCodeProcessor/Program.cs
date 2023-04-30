@@ -44,7 +44,7 @@ foreach (var sourceCommit in sourceCommitsToPortedOnTarget)
 async Task SyncSourceMasterBranch()
 {
     logger.Info("Syncing source master branch");
-    await RunSourceGit("checkout master");
+    await RunSourceGit("checkout master --force");
     await RunSourceGit("fetch");
     await RunSourceGit("reset --hard origin/master");
     logger.Info("Obtained latest changes from master");
@@ -130,31 +130,37 @@ async Task CreateTargetCommit(Commit sourceCommit)
 {
     logger.Info($"Switching to source {sourceCommit.Id}");
 
-    // clean, then switch to the target commit
+    // switch to the source commit, and clean
+    await RunSourceGit($"checkout {sourceCommit.Id} --force");
     await RunSourceGit("reset --hard");
     await RunSourceGit("clean -fdx");
-    await RunSourceGit($"checkout {sourceCommit.Id}");
-    
-    // clean, then switch to the commit's parent
-    await RunTargetGit("reset --hard");
-    await RunTargetGit("clean -fdx");
-    switch (sourceCommit.Parents.Length)
+
+    // switch to the target commit's parent
+    var targetParents = sourceCommit.Parents
+        .Select(p => config.SourceCommitToTargetCommit[p])
+        .ToArray();
+    if (targetParents.Length == 0)
     {
-        case 0:
-            // this commit is the root commit, so we don't have a parent
-            logger.Info($"Commit {sourceCommit.Id} is the root commit, so we don't have a parent");
-            await RestartTargetGitBranch();
-            break;
-        case 1:
-            // this commit has a single parent, so we can just switch to it
-            var targetParent = config.SourceCommitToTargetCommit[sourceCommit.Parents[0]];
-            logger.Info($"Commit {sourceCommit.Id} has a single parent {sourceCommit.Parents[0]}, switched to the corresponding target commit {targetParent}");
-            await RunTargetGit($"checkout {targetParent}");
-            break;
-        default:
-            throw new NotImplementedException("Merge commits are not supported yet");
+        // this commit is the root commit, so we don't have a parent
+        logger.Info($"Commit {sourceCommit.Id} is the root commit, so we don't have a parent");
+        await RestartTargetGitBranch();
     }
-    
+    else
+    {
+        if (targetParents.Length == 1)
+        {
+            logger.Info($"Commit {sourceCommit.Id} has a single parent {sourceCommit.Parents[0]}, switching to the corresponding target commit {targetParents[0]}");
+        }
+        else
+        {
+            logger.Info($"Commit {sourceCommit.Id} has multiple parents {string.Join(", ", sourceCommit.Parents)}, switching to first parent {targetParents[0]}");
+        }
+        await RunTargetGit($"checkout {targetParents[0]} --force");
+        // clean
+        await RunSourceGit("reset --hard");
+        await RunSourceGit("clean -fdx");
+    }
+
     // copy files from source to target according to the include list
     await Task.Run(() =>
     {
@@ -168,8 +174,9 @@ async Task CreateTargetCommit(Commit sourceCommit)
         }
     });
 
+    var commitMessage = $"{sourceCommit.Subject}\n\n{sourceCommit.Body}";
     // commit
-    await RunTargetGit($"commit -a -m \"{sourceCommit.Subject}\" -m \"{sourceCommit.Body}\"", new()
+    var environment = new Dictionary<string, string>
     {
         ["GIT_AUTHOR_NAME"] = config.NameByEmail[sourceCommit.Author],
         ["GIT_AUTHOR_EMAIL"] = "<>",
@@ -177,10 +184,19 @@ async Task CreateTargetCommit(Commit sourceCommit)
         ["GIT_COMMITTER_NAME"] = config.NameByEmail[sourceCommit.Committer],
         ["GIT_COMMITTER_EMAIL"] = "<>",
         ["GIT_COMMITTER_DATE"] = sourceCommit.CommitDate,
-    });
+    };
+    await RunTargetGit($"commit -a -F -", commitMessage, environment);
+    // last commit id
+    var targetCommit = await RunTargetGit("rev-parse HEAD");
+    if (targetParents.Length > 1)
+    {
+        // merge
+        var mergeParentsOptions = string.Join(' ', targetParents.Select(p => $"-p {p}"));
+        logger.Info($"Merging with {mergeParentsOptions}, original new target commit id: {targetCommit}");
+        targetCommit = await RunTargetGit($"commit-tree {mergeParentsOptions} -F - {targetCommit}^{{tree}}", commitMessage, environment);
+    }
 
     // save last commit id
-    var targetCommit = await RunTargetGit("rev-parse HEAD");
     logger.Info($"Committed on target repository: {targetCommit}...");
     config.SourceCommitToTargetCommit[sourceCommit.Id] = targetCommit;
     config = config with { LastSourceCommit = sourceCommit.Id };
@@ -211,25 +227,33 @@ async Task RestartTargetGitBranch()
         await RunTargetGit($"branch -D {mainBranch}");
     }
     // delete everything
-    await RunTargetGit("reset");
+    await RunTargetGit("reset --hard");
     await RunTargetGit("clean -fdx");
     // create the main branch
     await RunTargetGit($"branch -m {mainBranch}");
     logger.Info($"Reset target repository main branch done");
 }
 
-Task<string> RunSourceGit(string arguments, Dictionary<string, string>? enviroment = default)
+Task<string> RunSourceGit(string arguments)
 {
     logger.Debug($"source git {arguments}");
-    return RunGit(arguments, config.SourceDirectory, enviroment);
+    return RunGit(arguments, config.SourceDirectory, default, default);
 }
-Task<string> RunTargetGit(string arguments, Dictionary<string, string>? enviroment = default)
+Task<string> RunTargetGit(string arguments, string? stdin = default, Dictionary<string, string>? enviroment = default)
 {
     logger.Debug($"target git {arguments}");
-    return RunGit(arguments, config.DestinationDirectory, enviroment);
+    if (stdin is not null)
+    {
+        logger.Debug($"stdin: {stdin}");
+    }
+    if (enviroment is not null)
+    {
+        logger.Debug($"enviroment: {string.Join(", ", enviroment.Select(x => $"{x.Key}={x.Value}"))}");
+    }
+    return RunGit(arguments, config.DestinationDirectory, stdin, enviroment);
 }
 
-async Task<string> RunGit(string arguments, string directory, Dictionary<string, string>? enviroment)
+async Task<string> RunGit(string arguments, string directory, string? stdin, Dictionary<string, string>? enviroment)
 {
     var info = new ProcessStartInfo
     {
@@ -238,6 +262,7 @@ async Task<string> RunGit(string arguments, string directory, Dictionary<string,
         WorkingDirectory = directory,
         UseShellExecute = false,
         RedirectStandardOutput = true,
+        RedirectStandardInput = stdin is not null
     };
     if (enviroment is not null)
     {
@@ -247,6 +272,12 @@ async Task<string> RunGit(string arguments, string directory, Dictionary<string,
         }
     }
     using var process = Process.Start(info) ?? throw new Exception("Failed to start process");
+    if (stdin is not null)
+    {
+        await process.StandardInput.WriteAsync(stdin);
+        process.StandardInput.Flush();
+        process.StandardInput.Close();
+    }
     var result = await process.StandardOutput.ReadToEndAsync();
     if (process.ExitCode != 0)
     {
