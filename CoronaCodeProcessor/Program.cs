@@ -125,6 +125,7 @@ async Task<RawCommit[]> GetLatestGitLog()
         logBuilder.Append(character);
     }
     logBuilder.Append(']');
+    logger.Debug($"git log:\n{logBuilder}");
     return JsonSerializer.Deserialize<RawCommit[]>(logBuilder.ToString(), Config.JsonOptions)!;
 }
 
@@ -284,7 +285,8 @@ async Task<string> RunGit(string arguments, string directory, string? stdin, Dic
         WorkingDirectory = directory,
         UseShellExecute = false,
         RedirectStandardOutput = true,
-        RedirectStandardInput = stdin is not null
+        RedirectStandardInput = stdin is not null,
+        StandardOutputEncoding = Encoding.UTF8,
     };
     if (enviroment is not null)
     {
@@ -292,6 +294,10 @@ async Task<string> RunGit(string arguments, string directory, string? stdin, Dic
         {
             info.EnvironmentVariables[key] = value;
         }
+    }
+    if (info.RedirectStandardInput)
+    {
+        info.StandardInputEncoding = Encoding.UTF8;
     }
     using var process = Process.Start(info) ?? throw new Exception("Failed to start process");
     if (stdin is not null)
