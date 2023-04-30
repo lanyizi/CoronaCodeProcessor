@@ -50,53 +50,55 @@ async Task SyncSourceMasterBranch()
 
 async Task<RawCommit[]> GetLatestGitLog()
 {
-    var formatString = "{ 'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b', 'author': '%ae', 'authorDate': '%aI', 'committer': '%ce', 'committerDate': '%cI', 'committerName': '%an' }"
+    const string format = "{ 'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b', 'author': '%ae', 'authorDate': '%aI', 'committer': '%ce', 'committerDate': '%cI', 'committerName': '%an' }";
+    const char startOfText = '\x02';
+    const char endOfText = '\x03';
+    const char unitSeparator = '\x1F';
+    var formatString = format
     // we want to produce JSON, however if we are using quotes like normal JSON,
     // and the commit message contains quotes, it will break the JSON format.
     // So we use a different character to represent quotes.
     // We replace it to 0x1F (Unit Separator), which is a control character that is unlikely to appear in commit messages.
     // We also replace { and } to 0x02 (Start of Text) and 0x03 (End of Text) respectively.
-        .Replace("{", "%02")
-        .Replace("}", "%03")
-        .Replace("'", "%1F");
+        .Replace('{', startOfText)
+        .Replace('}', endOfText)
+        .Replace('\'', unitSeparator);
     var log = await RunSourceGit($"--no-pager log --reverse --format=\"{formatString}\"");
     // preprocess the log to replace the special characters back
-    bool firstBracket = true;
     bool inBrackets = false;
     var logBuilder = new StringBuilder(log.Length);
     logBuilder.Append('[');
     foreach (var character in log)
     {
-        inBrackets = character switch
+        switch (character)
         {
-            '\x02' => true,
-            '\x03' => false,
-            _ => inBrackets
-        };
-        if (inBrackets && firstBracket)
-        {
-            // separate brackets with comma
-            firstBracket = false;
-            logBuilder.Append(',');
+            case startOfText:
+                if (logBuilder.Length > 0)
+                {
+                    // separate brackets with comma
+                    logBuilder.Append(',');
+                }
+                logBuilder.Append('{');
+                inBrackets = true;
+                continue;
+            case endOfText:
+                logBuilder.Append('}');
+                inBrackets = false;
+                continue;
+            case unitSeparator:
+                logBuilder.Append('"');
+                continue;
         }
         if (!inBrackets)
         {
-            logBuilder.Append(character);
+            continue;
         }
-        else if (character < ' ' || character is '"' or '\\' or '/')
+        if (character < ' ' || character is '"' or '\\' or '/')
         {
             logBuilder.Append($"\\u{(int)character:X4}");
+            continue;
         }
-        else
-        {
-            logBuilder.Append(character switch
-            {
-                '\x02' => '{',
-                '\x03' => '}',
-                '\x1F' => '"',
-                _ => character
-            });
-        }
+        logBuilder.Append(character);
     }
     logBuilder.Append(']');
     return JsonSerializer.Deserialize<RawCommit[]>(logBuilder.ToString())!;
