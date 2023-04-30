@@ -81,7 +81,7 @@ async Task<RawCommit[]> GetLatestGitLog()
     const string format = @"{
         'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b',
         'author': '%ae', 'authorDate': '%aI', 'authorName': '%an',
-        'committer': '%ce', 'committerDate': '%cI', 'committerName': '%cn' 
+        'committer': '%ce', 'commitDate': '%cI', 'committerName': '%cn' 
     }";
     const char startOfText = '\x02';
     const char endOfText = '\x03';
@@ -213,7 +213,8 @@ async Task CreateTargetCommit(Commit sourceCommit)
         ["GIT_COMMITTER_EMAIL"] = "<>",
         ["GIT_COMMITTER_DATE"] = sourceCommit.CommitDate,
     };
-    await RunTargetGit($"commit -a -F -", commitMessage, environment);
+    await RunTargetGit($"add -A");
+    await RunTargetGit($"commit -F -", commitMessage, environment);
     // last commit id
     var targetCommit = await RunTargetGit("rev-parse HEAD");
     if (targetParents.Length > 1)
