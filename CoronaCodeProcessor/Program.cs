@@ -60,7 +60,7 @@ try
 
     return 0;
 }
-catch (Exception e)
+catch (Exception e) when (!Debugger.IsAttached)
 {
     logger.Fatal(e, "Unhandled Exception");
 }
