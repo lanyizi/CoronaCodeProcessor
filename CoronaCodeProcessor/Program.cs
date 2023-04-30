@@ -333,6 +333,8 @@ record Config(
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Allow,
+        WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
     };
