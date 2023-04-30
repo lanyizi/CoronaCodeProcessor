@@ -173,6 +173,10 @@ async Task CreateCommit(Commit commit)
         ["GIT_COMMITTER_EMAIL"] = "<>",
         ["GIT_COMMITTER_DATE"] = commit.CommitDate,
     });
+
+    // save last commit id
+    config.SourceCommitToTargetCommit[commit.Id] = await RunTargetGit("rev-parse HEAD");
+    await config.Save();
 }
 
 async Task RestartTargetGitBranch()
@@ -240,7 +244,8 @@ record Config(
     string LastCommitFileName,
     Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
-    string LastCommit)
+    string LastCommit,
+    string LastIncludeList)
 {
     public const string FileName = "config.json";
     public string IncludeListFileFullName => Path.Combine(SourceDirectory, IncludeListFileName);
