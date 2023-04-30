@@ -157,7 +157,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
     logger.Info($"Switching to source {sourceCommit.Id}");
 
     // switch to the source commit, and clean
-    await RunSourceGit($"checkout {sourceCommit.Id} --force");
+    await RunSourceGit($"-c advice.detachedHead=false checkout {sourceCommit.Id} --force");
     await RunSourceGit("reset --hard");
     await RunSourceGit("clean -fdx");
 
@@ -181,7 +181,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
         {
             logger.Info($"Commit {sourceCommit.Id} has multiple parents {string.Join(", ", sourceCommit.Parents)}, switching to first parent {targetParents[0]}");
         }
-        await RunTargetGit($"checkout {targetParents[0]} --force");
+        await RunTargetGit($"-c advice.detachedHead=false checkout {targetParents[0]} --force");
         // clean
         await RunSourceGit("reset --hard");
         await RunSourceGit("clean -fdx");
