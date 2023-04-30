@@ -2,10 +2,19 @@
 
 
 var logger = LogManager.GetLogger("Main");
+AppDomain.CurrentDomain.UnhandledException += (object sender, UnhandledExceptionEventArgs e) =>
+{
+    logger.Fatal((Exception)e.ExceptionObject, "Unhandled exception");
+};
+
 var config = await Config.Load();
 
 await SyncSourceMasterBranch();
 var rawLogs = await GetLatestGitLog();
+if (config.LimitCommitNumberForDebuggingPurposes is int debugLimit)
+{
+    rawLogs = rawLogs.TakeLast(debugLimit).ToArray();
+}
 await UpdateEmailTable();
 var sourceCommits = rawLogs
     .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
@@ -295,7 +304,7 @@ async Task<string> RunGit(string arguments, string directory, string? stdin, Dic
     var result = await process.StandardOutput.ReadToEndAsync();
     if (process.ExitCode != 0)
     {
-        throw new Exception($"git {arguments} failed with exit code {process.ExitCode}");
+        throw new Exception($"git {arguments} on {info.WorkingDirectory} failed with exit code {process.ExitCode}");
     }
     return result;
 }
@@ -308,10 +317,12 @@ record Config(
     Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
     string LastSourceCommit,
-    string LastIncludeList)
+    string LastIncludeList,
+    int? LimitCommitNumberForDebuggingPurposes = null,
+    string? DebugIncludeListFullName = null)
 {
     public const string FileName = "config.json";
-    public string IncludeListFileFullName => Path.Combine(SourceDirectory, IncludeListFileName);
+    public string IncludeListFileFullName => DebugIncludeListFullName ?? Path.Combine(SourceDirectory, IncludeListFileName);
     public string TargetRepositoryLastSourceCommitFileFullName => Path.Combine(DestinationDirectory, LastCommitFileName);
 
     public static async Task<Config> Load()
