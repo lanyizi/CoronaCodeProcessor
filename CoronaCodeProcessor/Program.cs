@@ -2,64 +2,70 @@
 
 
 var logger = LogManager.GetLogger("Main");
-AppDomain.CurrentDomain.UnhandledException += (object sender, UnhandledExceptionEventArgs e) =>
+Config config;
+try
 {
-    logger.Fatal((Exception)e.ExceptionObject, "Unhandled exception");
-};
-var config = await Config.Load();
+    config = await Config.Load();
 
-await SyncSourceMasterBranch();
-var rawLogs = await GetLatestGitLog();
-if (config.LimitCommitNumberForDebuggingPurposes is int debugLimit)
-{
-    rawLogs = rawLogs.TakeLast(debugLimit).ToArray();
-}
-await UpdateEmailTable();
-var sourceCommits = rawLogs
-    .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
-    .ToArray();
-var sourceCommitById = sourceCommits.ToDictionary(c => c.Id);
+    await SyncSourceMasterBranch();
+    var rawLogs = await GetLatestGitLog();
+    if (config.LimitCommitNumberForDebuggingPurposes is int debugLimit)
+    {
+        rawLogs = rawLogs.TakeLast(debugLimit).ToArray();
+    }
+    await UpdateEmailTable(rawLogs);
+    var sourceCommits = rawLogs
+        .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
+        .ToArray();
+    var sourceCommitById = sourceCommits.ToDictionary(c => c.Id);
 
-// read and normalize the latest include list
-var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName))
-    .Select(x => x.Trim())
-    .Where(x => !string.IsNullOrWhiteSpace(x))
-    .OrderBy(x => x);
-var includeListString = string.Join('\n', includeList);
-// fully reprocess everything if:
-// - filter changed
-// - last commit not in git log (which indicates a possible force push)
-if (!sourceCommitById.ContainsKey(config.LastSourceCommit))
-{
-    logger.Info("Last source commit not found in git log, history diverged, reprocessing everything");
-    await RestartTargetGitBranch();
-}
-if (config.LastIncludeList != includeListString)
-{
-    logger.Info("Include list has changed, reprocessing everything");
-    await RestartTargetGitBranch();
-}
+    // read and normalize the latest include list
+    var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName))
+        .Select(x => x.Trim())
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .OrderBy(x => x)
+        .ToArray();
+    // fully reprocess everything if:
+    // - filter changed
+    // - last commit not in git log (which indicates a possible force push)
+    if (!sourceCommitById.ContainsKey(config.LastSourceCommit))
+    {
+        logger.Info("Last source commit not found in git log, history diverged, reprocessing everything");
+        await RestartTargetGitBranch();
+    }
+    if (!config.LastIncludeList.SequenceEqual(includeList))
+    {
+        logger.Info("Include list has changed, reprocessing everything");
+        config = config with { LastIncludeList = includeList };
+        await RestartTargetGitBranch();
+    }
 
-// process commits
-var sourceCommitsToPortedOnTarget = sourceCommits
-    .TakeWhile(c => c.Id != config.LastSourceCommit)
-    .Reverse();
-foreach (var sourceCommit in sourceCommitsToPortedOnTarget)
-{
-    await CreateTargetCommit(sourceCommit);
-}
-var lastTargetCommit = config.SourceCommitToTargetCommit[config.LastSourceCommit];
-// we can assume the last source commit is always on the main branch
-// because we only process commits that are on the main branch
-// so we also bring the last target commit to target's main branch
-logger.Info($"Bringing last target commit {lastTargetCommit} to target's main branch");
-await RunTargetGit($"branch -f main {lastTargetCommit}");
-// push to remote
-logger.Info("Pushing to remote");
-await RunTargetGit($"push -f -u origin main");
-logger.Info("Done");
+    // process commits
+    var sourceCommitsToPortedOnTarget = sourceCommits
+        .TakeWhile(c => c.Id != config.LastSourceCommit)
+        .Reverse();
+    foreach (var sourceCommit in sourceCommitsToPortedOnTarget)
+    {
+        await CreateTargetCommit(sourceCommit);
+    }
+    var lastTargetCommit = config.SourceCommitToTargetCommit[config.LastSourceCommit];
+    // we can assume the last source commit is always on the main branch
+    // because we only process commits that are on the main branch
+    // so we also bring the last target commit to target's main branch
+    logger.Info($"Bringing last target commit {lastTargetCommit} to target's main branch");
+    await RunTargetGit($"branch -f main {lastTargetCommit}");
+    // push to remote
+    logger.Info("Pushing to remote");
+    await RunTargetGit($"push -f -u origin main");
+    logger.Info("Done");
 
-return 0;
+    return 0;
+}
+catch (Exception e)
+{
+    logger.Fatal(e, "Unhandled Exception");
+}
+return 1;
 
 
 async Task SyncSourceMasterBranch()
@@ -122,7 +128,7 @@ async Task<RawCommit[]> GetLatestGitLog()
     return JsonSerializer.Deserialize<RawCommit[]>(logBuilder.ToString(), Config.JsonOptions)!;
 }
 
-async Task UpdateEmailTable()
+async Task UpdateEmailTable(RawCommit[] rawLogs)
 {
     foreach (var c in rawLogs)
     {
@@ -180,7 +186,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
     // copy files from source to target according to the include list
     await Task.Run(() =>
     {
-        var files = includeList.SelectMany(pattern => Directory.EnumerateFiles(config.SourceDirectory, pattern)).ToArray();
+        var files = config.LastIncludeList.SelectMany(pattern => Directory.EnumerateFiles(config.SourceDirectory, pattern)).ToArray();
         foreach (var sourceFullName in files)
         {
             var relativeFileName = Path.GetRelativePath(config.SourceDirectory, sourceFullName);
@@ -225,7 +231,6 @@ async Task RestartTargetGitBranch()
     config = config with
     {
         LastSourceCommit = string.Empty,
-        LastIncludeList = includeListString,
         SourceCommitToTargetCommit = new()
     };
     await config.Save();
@@ -311,7 +316,7 @@ record Config(
     Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
     string LastSourceCommit,
-    string LastIncludeList,
+    string[] LastIncludeList,
     int? LimitCommitNumberForDebuggingPurposes = null,
     string? DebugIncludeListFullName = null)
 {
