@@ -6,7 +6,6 @@ AppDomain.CurrentDomain.UnhandledException += (object sender, UnhandledException
 {
     logger.Fatal((Exception)e.ExceptionObject, "Unhandled exception");
 };
-
 var config = await Config.Load();
 
 await SyncSourceMasterBranch();
@@ -97,16 +96,11 @@ async Task<RawCommit[]> GetLatestGitLog()
         switch (character)
         {
             case startOfText:
-                if (logBuilder.Length > 0)
-                {
-                    // separate brackets with comma
-                    logBuilder.Append(',');
-                }
                 logBuilder.Append('{');
                 inBrackets = true;
                 continue;
             case endOfText:
-                logBuilder.Append('}');
+                logBuilder.Append("},");
                 inBrackets = false;
                 continue;
             case unitSeparator:
@@ -125,7 +119,7 @@ async Task<RawCommit[]> GetLatestGitLog()
         logBuilder.Append(character);
     }
     logBuilder.Append(']');
-    return JsonSerializer.Deserialize<RawCommit[]>(logBuilder.ToString())!;
+    return JsonSerializer.Deserialize<RawCommit[]>(logBuilder.ToString(), Config.JsonOptions)!;
 }
 
 async Task UpdateEmailTable()
@@ -322,17 +316,22 @@ record Config(
     string? DebugIncludeListFullName = null)
 {
     public const string FileName = "config.json";
+    public static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        AllowTrailingCommas = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
     public string IncludeListFileFullName => DebugIncludeListFullName ?? Path.Combine(SourceDirectory, IncludeListFileName);
     public string TargetRepositoryLastSourceCommitFileFullName => Path.Combine(DestinationDirectory, LastCommitFileName);
 
     public static async Task<Config> Load()
     {
-        return JsonSerializer.Deserialize<Config>(await File.ReadAllTextAsync(FileName))!;
+        return JsonSerializer.Deserialize<Config>(await File.ReadAllTextAsync(FileName), JsonOptions)!;
     }
 
     public Task Save()
     {
-        return File.WriteAllTextAsync(FileName, JsonSerializer.Serialize(this));
+        return File.WriteAllTextAsync(FileName, JsonSerializer.Serialize(this, JsonOptions));
     }
 }
 
