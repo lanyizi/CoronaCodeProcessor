@@ -336,7 +336,7 @@ async Task<string> RunGit(string arguments, string directory, string? stdin, Dic
     var result = await process.StandardOutput.ReadToEndAsync();
     if (process.ExitCode != 0)
     {
-        throw new Exception($"git {arguments} on {info.WorkingDirectory} failed with exit code {process.ExitCode}");
+        throw new Exception($"git {arguments} on {info.WorkingDirectory} failed with exit code {process.ExitCode}, output: {result}");
     }
     return result;
 }
