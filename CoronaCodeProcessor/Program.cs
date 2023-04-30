@@ -195,6 +195,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
         {
             var relativeFileName = Path.GetRelativePath(config.SourceDirectory, sourceFullName);
             var destinationFullName = Path.Combine(config.DestinationDirectory, relativeFileName);
+            new FileInfo(destinationFullName).Directory?.Create();
             File.Copy(sourceFullName, destinationFullName, true);
             logger.Debug($"Copied {sourceFullName} to {destinationFullName}");
         }
