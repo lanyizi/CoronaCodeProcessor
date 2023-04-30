@@ -14,7 +14,7 @@ try
     }
     await UpdateEmailTable(rawLogs);
     var sourceCommits = rawLogs
-        .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
+        .Select(c => new Commit(c.Id, c.Parents.Split(' ', StringSplitOptions.RemoveEmptyEntries), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
         .ToArray();
     var sourceCommitById = sourceCommits.ToDictionary(c => c.Id);
 
