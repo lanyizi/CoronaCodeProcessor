@@ -217,12 +217,14 @@ async Task CreateTargetCommit(Commit sourceCommit)
     await RunTargetGit($"commit -F -", commitMessage, environment);
     // last commit id
     var targetCommit = await RunTargetGit("rev-parse HEAD");
+    targetCommit = targetCommit.Trim(); // rev-parse HEAD will output with newline
     if (targetParents.Length > 1)
     {
         // merge
         var mergeParentsOptions = string.Join(' ', targetParents.Select(p => $"-p {p}"));
         logger.Info($"Merging with {mergeParentsOptions}, original new target commit id: {targetCommit}");
         targetCommit = await RunTargetGit($"commit-tree {mergeParentsOptions} -F - {targetCommit}^{{tree}}", commitMessage, environment);
+        targetCommit = targetCommit.Trim();
     }
 
     // save last commit id
