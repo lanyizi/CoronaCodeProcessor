@@ -40,6 +40,19 @@ foreach (var sourceCommit in sourceCommitsToPortedOnTarget)
 {
     await CreateTargetCommit(sourceCommit);
 }
+var lastTargetCommit = config.SourceCommitToTargetCommit[config.LastSourceCommit];
+// we can assume the last source commit is always on the main branch
+// because we only process commits that are on the main branch
+// so we also bring the last target commit to target's main branch
+logger.Info($"Bringing last target commit {lastTargetCommit} to target's main branch");
+await RunTargetGit($"branch -f main {lastTargetCommit}");
+// push to remote
+logger.Info("Pushing to remote");
+await RunTargetGit($"push -f -u origin main");
+logger.Info("Done");
+
+return 0;
+
 
 async Task SyncSourceMasterBranch()
 {
@@ -49,7 +62,6 @@ async Task SyncSourceMasterBranch()
     await RunSourceGit("reset --hard origin/master");
     logger.Info("Obtained latest changes from master");
 }
-
 
 async Task<RawCommit[]> GetLatestGitLog()
 {
