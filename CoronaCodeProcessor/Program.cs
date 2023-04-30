@@ -333,7 +333,7 @@ record Config(
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         AllowTrailingCommas = true,
-        ReadCommentHandling = JsonCommentHandling.Allow,
+        ReadCommentHandling = JsonCommentHandling.Skip,
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
