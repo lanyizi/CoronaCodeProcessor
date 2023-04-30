@@ -7,36 +7,38 @@ var config = await Config.Load();
 await SyncSourceMasterBranch();
 var rawLogs = await GetLatestGitLog();
 await UpdateEmailTable();
-var commits = rawLogs
+var sourceCommits = rawLogs
     .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
     .ToArray();
-var commitById = commits.ToDictionary(c => c.Id);
+var sourceCommitById = sourceCommits.ToDictionary(c => c.Id);
 
 // read and normalize the latest include list
 var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName))
     .Select(x => x.Trim())
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .OrderBy(x => x);
-
+var includeListString = string.Join('\n', includeList);
 // fully reprocess everything if:
 // - filter changed
 // - last commit not in git log (which indicates a possible force push)
-bool needRestart = false;
-if (!commitById.ContainsKey(config.LastCommit))
+if (!sourceCommitById.ContainsKey(config.LastSourceCommit))
 {
-    logger.Info("Last commit not found in git log, history diverged, reprocessing everything");
-    needRestart = true;
+    logger.Info("Last source commit not found in git log, history diverged, reprocessing everything");
+    await RestartTargetGitBranch();
 }
-var includeListString = string.Join('\n', includeList);
 if (config.LastIncludeList != includeListString)
 {
     logger.Info("Include list has changed, reprocessing everything");
-    needRestart = true;
-}
-if (needRestart)
-{
-    config = config with { LastCommit = "", LastIncludeList = includeListString, SourceCommitToTargetCommit = new() };
     await RestartTargetGitBranch();
+}
+
+// process commits
+var sourceCommitsToPortedOnTarget = sourceCommits
+    .TakeWhile(c => c.Id != config.LastSourceCommit)
+    .Reverse();
+foreach (var sourceCommit in sourceCommitsToPortedOnTarget)
+{
+    await CreateTargetCommit(sourceCommit);
 }
 
 async Task SyncSourceMasterBranch()
@@ -63,7 +65,7 @@ async Task<RawCommit[]> GetLatestGitLog()
         .Replace('{', startOfText)
         .Replace('}', endOfText)
         .Replace('\'', unitSeparator);
-    var log = await RunSourceGit($"--no-pager log --reverse --format=\"{formatString}\"");
+    var log = await RunSourceGit($"--no-pager log --format=\"{formatString}\"");
     // preprocess the log to replace the special characters back
     bool inBrackets = false;
     var logBuilder = new StringBuilder(log.Length);
@@ -106,7 +108,7 @@ async Task<RawCommit[]> GetLatestGitLog()
 
 async Task UpdateEmailTable()
 {
-    foreach (var c in rawLogs.Reverse())
+    foreach (var c in rawLogs)
     {
         // populate email to author dict
         if (!config.NameByEmail.ContainsKey(c.Author))
@@ -124,27 +126,29 @@ async Task UpdateEmailTable()
     await config.Save();
 }
 
-async Task CreateCommit(Commit commit)
+async Task CreateTargetCommit(Commit sourceCommit)
 {
+    logger.Info($"Switching to source {sourceCommit.Id}");
+
     // clean, then switch to the target commit
     await RunSourceGit("reset --hard");
     await RunSourceGit("clean -fdx");
-    await RunSourceGit($"checkout {commit.Id}");
+    await RunSourceGit($"checkout {sourceCommit.Id}");
     
     // clean, then switch to the commit's parent
     await RunTargetGit("reset --hard");
     await RunTargetGit("clean -fdx");
-    switch (commit.Parents.Length)
+    switch (sourceCommit.Parents.Length)
     {
         case 0:
             // this commit is the root commit, so we don't have a parent
-            logger.Info($"Commit {commit.Id} is the root commit, so we don't have a parent");
+            logger.Info($"Commit {sourceCommit.Id} is the root commit, so we don't have a parent");
             await RestartTargetGitBranch();
             break;
         case 1:
             // this commit has a single parent, so we can just switch to it
-            var targetParent = config.SourceCommitToTargetCommit[commit.Parents[0]];
-            logger.Info($"Commit {commit.Id} has a single parent {commit.Parents[0]}, switched to the corresponding target commit {targetParent}");
+            var targetParent = config.SourceCommitToTargetCommit[sourceCommit.Parents[0]];
+            logger.Info($"Commit {sourceCommit.Id} has a single parent {sourceCommit.Parents[0]}, switched to the corresponding target commit {targetParent}");
             await RunTargetGit($"checkout {targetParent}");
             break;
         default:
@@ -165,24 +169,34 @@ async Task CreateCommit(Commit commit)
     });
 
     // commit
-    logger.Info($"Committing {commit.Id}...");
-    await RunTargetGit($"commit -a -m \"{commit.Subject}\" -m \"{commit.Body}\"", new()
+    await RunTargetGit($"commit -a -m \"{sourceCommit.Subject}\" -m \"{sourceCommit.Body}\"", new()
     {
-        ["GIT_AUTHOR_NAME"] = config.NameByEmail[commit.Author],
+        ["GIT_AUTHOR_NAME"] = config.NameByEmail[sourceCommit.Author],
         ["GIT_AUTHOR_EMAIL"] = "<>",
-        ["GIT_AUTHOR_DATE"] = commit.AuthorDate,
-        ["GIT_COMMITTER_NAME"] = config.NameByEmail[commit.Committer],
+        ["GIT_AUTHOR_DATE"] = sourceCommit.AuthorDate,
+        ["GIT_COMMITTER_NAME"] = config.NameByEmail[sourceCommit.Committer],
         ["GIT_COMMITTER_EMAIL"] = "<>",
-        ["GIT_COMMITTER_DATE"] = commit.CommitDate,
+        ["GIT_COMMITTER_DATE"] = sourceCommit.CommitDate,
     });
 
     // save last commit id
-    config.SourceCommitToTargetCommit[commit.Id] = await RunTargetGit("rev-parse HEAD");
+    var targetCommit = await RunTargetGit("rev-parse HEAD");
+    logger.Info($"Committed on target repository: {targetCommit}...");
+    config.SourceCommitToTargetCommit[sourceCommit.Id] = targetCommit;
+    config = config with { LastSourceCommit = sourceCommit.Id };
     await config.Save();
 }
 
 async Task RestartTargetGitBranch()
 {
+    config = config with
+    {
+        LastSourceCommit = string.Empty,
+        LastIncludeList = includeListString,
+        SourceCommitToTargetCommit = new()
+    };
+    await config.Save();
+
     logger.Info($"Reset target repository main branch");
     const string mainBranch = "main";
     var temporaryId = $"branch-{Guid.NewGuid():N}";
@@ -206,14 +220,16 @@ async Task RestartTargetGitBranch()
 
 Task<string> RunSourceGit(string arguments, Dictionary<string, string>? enviroment = default)
 {
+    logger.Debug($"source git {arguments}");
     return RunGit(arguments, config.SourceDirectory, enviroment);
 }
 Task<string> RunTargetGit(string arguments, Dictionary<string, string>? enviroment = default)
 {
+    logger.Debug($"target git {arguments}");
     return RunGit(arguments, config.DestinationDirectory, enviroment);
 }
 
-static async Task<string> RunGit(string arguments, string directory, Dictionary<string, string>? enviroment)
+async Task<string> RunGit(string arguments, string directory, Dictionary<string, string>? enviroment)
 {
     var info = new ProcessStartInfo
     {
@@ -246,7 +262,7 @@ record Config(
     string LastCommitFileName,
     Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
-    string LastCommit,
+    string LastSourceCommit,
     string LastIncludeList)
 {
     public const string FileName = "config.json";
