@@ -6,7 +6,7 @@ try
 {
     config = await Config.Load();
 
-    await SyncSourceMasterBranch();
+    await SyncSourceMainBranch();
     var rawLogs = await GetLatestGitLog();
     if (config.LimitCommitNumberForDebuggingPurposes is int debugLimit)
     {
@@ -52,10 +52,11 @@ try
     // because we only process commits that are on the main branch
     // so we also bring the last target commit to target's main branch
     logger.Info($"Bringing last target commit {lastTargetCommit} to target's main branch");
-    await RunTargetGit($"branch -f main {lastTargetCommit}");
+    await RunTargetGit($"branch -f {config.TargetMainBranch} {lastTargetCommit}");
+    await RunTargetGit($"checkout -f {config.TargetMainBranch}");
     // push to remote
     logger.Info("Pushing to remote");
-    await RunTargetGit($"push -f -u origin main");
+    await RunTargetGit($"push -f -u {config.TargetRemote} {config.TargetMainBranch}");
     logger.Info("Done");
 
     return 0;
@@ -67,13 +68,11 @@ catch (Exception e) when (!Debugger.IsAttached)
 return 1;
 
 
-async Task SyncSourceMasterBranch()
+async Task SyncSourceMainBranch()
 {
-    logger.Info("Syncing source master branch");
-    await RunSourceGit("checkout master --force");
-    await RunSourceGit("fetch");
-    await RunSourceGit("reset --hard origin/master");
-    logger.Info("Obtained latest changes from master");
+    logger.Info("Syncing source main branch");
+    await RunSourceGit($"fetch {config.SourceRemote} {config.SourceMainBranch}");
+    logger.Info("Fetched latest changes from source remote");
 }
 
 async Task<RawCommit[]> GetLatestGitLog()
@@ -95,7 +94,7 @@ async Task<RawCommit[]> GetLatestGitLog()
         .Replace('{', startOfText)
         .Replace('}', endOfText)
         .Replace('\'', unitSeparator);
-    var log = await RunSourceGit($"--no-pager log --format=\"{formatString}\"");
+    var log = await RunSourceGit($"--no-pager log --format=\"{formatString}\" {config.SourceRemote}/{config.SourceMainBranch}");
     // preprocess the log to replace the special characters back
     bool inBrackets = false;
     var logBuilder = new StringBuilder(log.Length);
@@ -266,23 +265,22 @@ async Task RestartTargetGitBranch()
     await config.Save();
 
     logger.Info($"Reset target repository main branch");
-    const string mainBranch = "main";
     var temporaryId = $"branch-{Guid.NewGuid():N}";
     await RunTargetGit($"checkout --orphan {temporaryId}");
     var existingBranches = (await RunTargetGit("branch --list"))
         .Split('\n')
         .Select(x => x.Trim())
         .ToHashSet();
-    if (existingBranches.Contains(mainBranch))
+    if (existingBranches.Contains(config.TargetMainBranch))
     {
         // delete the main branch
-        await RunTargetGit($"branch -D {mainBranch}");
+        await RunTargetGit($"branch -D {config.TargetMainBranch}");
     }
     // delete everything
     await RunTargetGit("reset --hard");
     await RunTargetGit("clean -fdx");
     // create the main branch
-    await RunTargetGit($"branch -m {mainBranch}");
+    await RunTargetGit($"branch -m {config.TargetMainBranch}");
     logger.Info($"Reset target repository main branch done");
 }
 
@@ -350,6 +348,10 @@ record Config(
     string LastCommitFileName,
     Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
+    string SourceRemote,
+    string SourceMainBranch,
+    string TargetRemote,
+    string TargetMainBranch,
     string LastSourceCommit,
     string[] LastIncludeList,
     int? LimitCommitNumberForDebuggingPurposes = null,
@@ -384,6 +386,10 @@ record Config(
         // fix null fields
         loaded = loaded with
         {
+            SourceRemote = loaded.SourceRemote ?? "origin",
+            SourceMainBranch = loaded.SourceMainBranch ?? "master",
+            TargetRemote = loaded.TargetRemote ?? "origin",
+            TargetMainBranch = loaded.TargetMainBranch ?? "main",
             SourceCommitToTargetCommit = loaded.SourceCommitToTargetCommit ?? new(),
             NameByEmail = loaded.NameByEmail ?? new(),
             LastSourceCommit = loaded.LastSourceCommit ?? string.Empty,
