@@ -20,7 +20,7 @@ try
 
     // read and normalize the latest include list
     var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName))
-        .Select(x => x.Trim())
+        .Select(x => x.Split("//")[0].Trim())
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .OrderBy(x => x)
         .ToArray();
