@@ -3,11 +3,7 @@
 
 var logger = LogManager.GetLogger("Main");
 var config = await Config.Load();
-var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName)).ToHashSet();
 
-// fully reprocess everything if:
-// - filter changed
-// - last commit not in git log (which indicates a possible force push)
 await SyncSourceMasterBranch();
 var rawLogs = await GetLatestGitLog();
 await UpdateEmailTable();
@@ -15,6 +11,33 @@ var commits = rawLogs
     .Select(c => new Commit(c.Id, c.Parents.Split(' '), c.Subject, c.Body, c.Author, c.AuthorDate, c.Committer, c.CommitDate))
     .ToArray();
 var commitById = commits.ToDictionary(c => c.Id);
+
+// read and normalize the latest include list
+var includeList = (await File.ReadAllLinesAsync(config.IncludeListFileFullName))
+    .Select(x => x.Trim())
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .OrderBy(x => x);
+
+// fully reprocess everything if:
+// - filter changed
+// - last commit not in git log (which indicates a possible force push)
+bool needRestart = false;
+if (!commitById.ContainsKey(config.LastCommit))
+{
+    logger.Info("Last commit not found in git log, history diverged, reprocessing everything");
+    needRestart = true;
+}
+var includeListString = string.Join('\n', includeList);
+if (config.LastIncludeList != includeListString)
+{
+    logger.Info("Include list has changed, reprocessing everything");
+    needRestart = true;
+}
+if (needRestart)
+{
+    config = config with { LastCommit = "", LastIncludeList = includeListString, SourceCommitToTargetCommit = new() };
+    await RestartTargetGitBranch();
+}
 
 async Task SyncSourceMasterBranch()
 {
@@ -155,16 +178,24 @@ async Task CreateCommit(Commit commit)
 async Task RestartTargetGitBranch()
 {
     logger.Info($"Reset target repository main branch");
+    const string mainBranch = "main";
+    var temporaryId = $"branch-{Guid.NewGuid():N}";
+    await RunTargetGit($"checkout --orphan {temporaryId}");
     var existingBranches = (await RunTargetGit("branch --list"))
         .Split('\n')
         .Select(x => x.Trim())
         .ToHashSet();
-    if (existingBranches.Contains("main"))
+    if (existingBranches.Contains(mainBranch))
     {
         // delete the main branch
-        await RunTargetGit("branch -D main");
+        await RunTargetGit($"branch -D {mainBranch}");
     }
-    await RunTargetGit("checkout --orphan main");
+    // delete everything
+    await RunTargetGit("reset");
+    await RunTargetGit("clean -fdx");
+    // create the main branch
+    await RunTargetGit($"branch -m {mainBranch}");
+    logger.Info($"Reset target repository main branch done");
 }
 
 Task<string> RunSourceGit(string arguments, Dictionary<string, string>? enviroment = default)
