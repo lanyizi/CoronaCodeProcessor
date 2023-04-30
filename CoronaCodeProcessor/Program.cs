@@ -50,6 +50,7 @@ async Task SyncSourceMasterBranch()
     logger.Info("Obtained latest changes from master");
 }
 
+
 async Task<RawCommit[]> GetLatestGitLog()
 {
     const string format = "{ 'id': '%H', 'parents': '%P', 'subject': '%s', 'body': '%b', 'author': '%ae', 'authorDate': '%aI', 'committer': '%ce', 'committerDate': '%cI', 'committerName': '%an' }";
@@ -172,6 +173,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
             File.Copy(sourceFullName, destinationFullName, true);
             logger.Debug($"Copied {sourceFullName} to {destinationFullName}");
         }
+        File.WriteAllText(config.TargetRepositoryLastSourceCommitFileFullName, sourceCommit.Id);
     });
 
     var commitMessage = $"{sourceCommit.Subject}\n\n{sourceCommit.Body}";
@@ -298,7 +300,7 @@ record Config(
 {
     public const string FileName = "config.json";
     public string IncludeListFileFullName => Path.Combine(SourceDirectory, IncludeListFileName);
-    public string LastCommitFileFullName => Path.Combine(DestinationDirectory, LastCommitFileName);
+    public string TargetRepositoryLastSourceCommitFileFullName => Path.Combine(DestinationDirectory, LastCommitFileName);
 
     public static async Task<Config> Load()
     {
