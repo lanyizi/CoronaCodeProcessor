@@ -191,9 +191,24 @@ async Task CreateTargetCommit(Commit sourceCommit)
     }
 
     // copy files from source to target according to the include list
-    await Task.Run(() =>
+    await Task.Run(async () =>
     {
+        var deleteTask = Task.Run(() =>
+        {
+            logger.Trace("Starting deleting target repository content");
+            Array.ForEach(Directory.GetFiles(config.DestinationDirectory), File.Delete);
+            foreach (var directory in Directory.GetDirectories(config.DestinationDirectory))
+            {
+                if (directory != ".git")
+                {
+                    Directory.Delete(directory, true);
+                }
+            }
+            logger.Trace("Deleted all target repository content");
+        });
         var files = config.LastIncludeList.SelectMany(pattern => FindFiles(config.SourceDirectory, pattern)).ToArray();
+        // wait until files are deleted
+        await deleteTask;
         foreach (var sourceFullName in files)
         {
             var relativeFileName = Path.GetRelativePath(config.SourceDirectory, sourceFullName);
