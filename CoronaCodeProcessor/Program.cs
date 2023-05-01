@@ -196,8 +196,8 @@ async Task CreateTargetCommit(Commit sourceCommit)
         var deleteTask = Task.Run(() =>
         {
             logger.Trace("Starting deleting target repository content");
-            Array.ForEach(Directory.GetFiles(config.DestinationDirectory), File.Delete);
-            foreach (var directory in Directory.GetDirectories(config.DestinationDirectory))
+            Array.ForEach(Directory.GetFiles(config.TargetDirectory), File.Delete);
+            foreach (var directory in Directory.GetDirectories(config.TargetDirectory))
             {
                 if (directory != ".git")
                 {
@@ -212,7 +212,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
         foreach (var sourceFullName in files)
         {
             var relativeFileName = Path.GetRelativePath(config.SourceDirectory, sourceFullName);
-            var destinationFullName = Path.Combine(config.DestinationDirectory, relativeFileName);
+            var destinationFullName = Path.Combine(config.TargetDirectory, relativeFileName);
             new FileInfo(destinationFullName).Directory?.Create();
             File.Copy(sourceFullName, destinationFullName, true);
             logger.Trace($"Copied {sourceFullName} to {destinationFullName}");
@@ -336,7 +336,7 @@ Task<string> RunTargetGit(string arguments, string? stdin = default, Dictionary<
     {
         logger.Debug($"enviroment: {string.Join(", ", enviroment.Select(x => $"{x.Key}={x.Value}"))}");
     }
-    return RunGit(arguments, config.DestinationDirectory, stdin, enviroment);
+    return RunGit(arguments, config.TargetDirectory, stdin, enviroment);
 }
 
 async Task<string> RunGit(string arguments, string directory, string? stdin, Dictionary<string, string>? enviroment)
@@ -379,7 +379,7 @@ async Task<string> RunGit(string arguments, string directory, string? stdin, Dic
 
 record Config(
     string SourceDirectory,
-    string DestinationDirectory,
+    string TargetDirectory,
     string IncludeListFileName,
     string LastCommitFileName,
     Dictionary<string, string> SourceCommitToTargetCommit,
@@ -407,7 +407,7 @@ record Config(
     [System.Text.Json.Serialization.JsonIgnore]
     public string IncludeListFileFullName => DebugIncludeListFullName ?? Path.Combine(SourceDirectory, IncludeListFileName);
     [System.Text.Json.Serialization.JsonIgnore]
-    public string TargetRepositoryLastSourceCommitFileFullName => Path.Combine(DestinationDirectory, LastCommitFileName);
+    public string TargetRepositoryLastSourceCommitFileFullName => Path.Combine(TargetDirectory, LastCommitFileName);
 
     public static async Task<Config> Load()
     {
@@ -420,7 +420,7 @@ record Config(
             }
         }
         CheckRequiredField(loaded.SourceDirectory);
-        CheckRequiredField(loaded.DestinationDirectory);
+        CheckRequiredField(loaded.TargetDirectory);
         CheckRequiredField(loaded.IncludeListFileName);
         CheckRequiredField(loaded.LastCommitFileName);
         // fix null fields
