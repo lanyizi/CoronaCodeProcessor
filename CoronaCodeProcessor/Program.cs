@@ -200,7 +200,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
             var destinationFullName = Path.Combine(config.DestinationDirectory, relativeFileName);
             new FileInfo(destinationFullName).Directory?.Create();
             File.Copy(sourceFullName, destinationFullName, true);
-            logger.Debug($"Copied {sourceFullName} to {destinationFullName}");
+            logger.Trace($"Copied {sourceFullName} to {destinationFullName}");
         }
         File.WriteAllText(config.TargetRepositoryLastSourceCommitFileFullName, sourceCommit.Id);
     });
@@ -239,7 +239,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
 
 string[] FindFiles(string directory, string pattern)
 {
-    logger.Debug($"Searching files in {directory} with pattern {pattern}");
+    logger.Trace($"Searching files in {directory} with pattern {pattern}");
     var wildcards = new[] { '*', '?' };
     var wildcardIndex = pattern.IndexOfAny(wildcards);
     if (wildcardIndex != -1)
