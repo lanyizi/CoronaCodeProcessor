@@ -44,6 +44,11 @@ try
     var sourceCommitsToPortedOnTarget = sourceCommits
         .TakeWhile(c => c.Id != config.LastSourceCommit)
         .Reverse();
+    if (!sourceCommitsToPortedOnTarget.Any())
+    {
+        logger.Info("No new commits to process");
+        return 0;
+    }
     foreach (var sourceCommit in sourceCommitsToPortedOnTarget)
     {
         await CreateTargetCommit(sourceCommit);
