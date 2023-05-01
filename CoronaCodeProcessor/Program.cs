@@ -357,7 +357,9 @@ record Config(
     int? LimitCommitNumberForDebuggingPurposes = null,
     string? DebugIncludeListFullName = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
     public const string FileName = "config.json";
+    [System.Text.Json.Serialization.JsonIgnore]
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         AllowTrailingCommas = true,
@@ -366,7 +368,9 @@ record Config(
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
     };
+    [System.Text.Json.Serialization.JsonIgnore]
     public string IncludeListFileFullName => DebugIncludeListFullName ?? Path.Combine(SourceDirectory, IncludeListFileName);
+    [System.Text.Json.Serialization.JsonIgnore]
     public string TargetRepositoryLastSourceCommitFileFullName => Path.Combine(DestinationDirectory, LastCommitFileName);
 
     public static async Task<Config> Load()
