@@ -54,6 +54,8 @@ try
     logger.Info($"Bringing last target commit {lastTargetCommit} to target's main branch");
     await RunTargetGit($"branch -f {config.TargetMainBranch} {lastTargetCommit}");
     await RunTargetGit($"checkout -f {config.TargetMainBranch}");
+    // add additional files
+    await AddAdditionalFiles();
     // push to remote
     logger.Info("Pushing to remote");
     await RunTargetGit($"push -f -u {config.TargetRemote} {config.TargetMainBranch}");
@@ -252,6 +254,52 @@ async Task CreateTargetCommit(Commit sourceCommit)
     await config.Save();
 }
 
+async Task AddAdditionalFiles()
+{
+    if (string.IsNullOrWhiteSpace(config.AdditionalFilesDirectory))
+    {
+        logger.Info("No additional files directory specified, skipping");
+        return;
+    }
+    logger.Info($"Adding additional files from {config.AdditionalFilesDirectory}");
+    await Task.Run(() =>
+    {
+        var directories = new Queue<string>();
+        directories.Enqueue(config.AdditionalFilesDirectory);
+        while (directories.Count > 0)
+        {
+            var directory = directories.Dequeue();
+            foreach (var file in Directory.GetFiles(directory))
+            {
+                var relativeFileName = Path.GetRelativePath(config.AdditionalFilesDirectory, file);
+                var destinationFullName = Path.Combine(config.TargetDirectory, relativeFileName);
+                new FileInfo(destinationFullName).Directory?.Create();
+                File.Copy(file, destinationFullName, true);
+                logger.Trace($"Copied {file} to {destinationFullName}");
+            }
+            foreach (var subDirectory in Directory.GetDirectories(directory))
+            {
+                directories.Enqueue(subDirectory);
+            }
+        }
+    });
+    await RunTargetGit($"add -A");
+    var authorEmail = config.AdditionalFilesAuthor ?? "<>";
+    var author = config.NameByEmail.GetValueOrDefault(authorEmail, "<>");
+    authorEmail = config.EmailMap.GetValueOrDefault(authorEmail, authorEmail);
+    var nowString = DateTime.Now.ToString("o");
+    await RunTargetGit($"commit -F - --allow-empty-message", config.AdditionalFilesCommitMessage, new()
+    {
+        ["GIT_AUTHOR_NAME"] = author,
+        ["GIT_AUTHOR_EMAIL"] = authorEmail,
+        ["GIT_AUTHOR_DATE"] = nowString,
+        ["GIT_COMMITTER_NAME"] = author,
+        ["GIT_COMMITTER_EMAIL"] = nowString,
+        ["GIT_COMMITTER_DATE"] = nowString,
+    });
+    logger.Info("Additional files added");
+}
+
 string[] FindFiles(string directory, string pattern)
 {
     logger.Trace($"Searching files in {directory} with pattern {pattern}");
@@ -389,6 +437,9 @@ record Config(
     string SourceMainBranch,
     string TargetRemote,
     string TargetMainBranch,
+    string? AdditionalFilesDirectory,
+    string? AdditionalFilesCommitMessage,
+    string? AdditionalFilesAuthor,
     string LastSourceCommit,
     string[] LastIncludeList,
     int? LimitCommitNumberForDebuggingPurposes = null,
