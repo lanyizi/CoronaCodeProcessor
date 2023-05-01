@@ -220,7 +220,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
         File.WriteAllText(config.TargetRepositoryLastSourceCommitFileFullName, sourceCommit.Id);
     });
 
-    var commitMessage = $"{sourceCommit.Subject}\n\n{sourceCommit.Body}";
+    var commitMessage = $"{sourceCommit.Subject.Trim()}\n\n{sourceCommit.Body.Trim()}";
     // commit
     var environment = new Dictionary<string, string>
     {
@@ -232,7 +232,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
         ["GIT_COMMITTER_DATE"] = sourceCommit.CommitDate,
     };
     await RunTargetGit($"add -A");
-    await RunTargetGit($"commit -F -", commitMessage, environment);
+    await RunTargetGit($"commit -F - --allow-empty-message", commitMessage, environment);
     // last commit id
     var targetCommit = await RunTargetGit("rev-parse HEAD");
     targetCommit = targetCommit.Trim(); // rev-parse HEAD will output with newline
