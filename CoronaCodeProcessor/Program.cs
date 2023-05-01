@@ -240,6 +240,10 @@ async Task CreateTargetCommit(Commit sourceCommit)
 string[] FindFiles(string directory, string pattern)
 {
     logger.Trace($"Searching files in {directory} with pattern {pattern}");
+    if (!Directory.Exists(directory))
+    {
+        return Array.Empty<string>();
+    }
     var wildcards = new[] { '*', '?' };
     var wildcardIndex = pattern.IndexOfAny(wildcards);
     if (wildcardIndex != -1)
