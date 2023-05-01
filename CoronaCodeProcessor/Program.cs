@@ -3,9 +3,11 @@
 var logger = LogManager.GetLogger("Main");
 DateTimeOffset startTime = DateTimeOffset.Now;
 Config config;
+Cache cache;
 try
 {
     config = await Config.Load();
+    cache = await Cache.Load(config);
 
     await SyncSourceMainBranch();
     var rawLogs = await GetLatestGitLog();
@@ -28,21 +30,21 @@ try
     // fully reprocess everything if:
     // - filter changed
     // - last commit not in git log (which indicates a possible force push)
-    if (!sourceCommitById.ContainsKey(config.LastSourceCommit))
+    if (!sourceCommitById.ContainsKey(cache.LastSourceCommit))
     {
         logger.Info("Last source commit not found in git log, history diverged, reprocessing everything");
         await RestartTargetGitBranch();
     }
-    if (!config.LastIncludeList.SequenceEqual(includeList))
+    if (!cache.LastIncludeList.SequenceEqual(includeList))
     {
         logger.Info("Include list has changed, reprocessing everything");
-        config = config with { LastIncludeList = includeList };
+        cache = cache with { LastIncludeList = includeList };
         await RestartTargetGitBranch();
     }
 
     // process commits
     var sourceCommitsToPortedOnTarget = sourceCommits
-        .TakeWhile(c => c.Id != config.LastSourceCommit)
+        .TakeWhile(c => c.Id != cache.LastSourceCommit)
         .Reverse();
     if (!sourceCommitsToPortedOnTarget.Any())
     {
@@ -53,7 +55,7 @@ try
     {
         await CreateTargetCommit(sourceCommit);
     }
-    var lastTargetCommit = config.SourceCommitToTargetCommit[config.LastSourceCommit];
+    var lastTargetCommit = cache.SourceCommitToTargetCommit[cache.LastSourceCommit];
     // we can assume the last source commit is always on the main branch
     // because we only process commits that are on the main branch
     // so we also bring the last target commit to target's main branch
@@ -61,10 +63,10 @@ try
     await RunTargetGit($"branch -f {config.TargetMainBranch} {lastTargetCommit}");
     await RunTargetGit($"checkout -f {config.TargetMainBranch}");
     var finishTime = DateTimeOffset.Now;
-    if (config.LastFullGenerationEnd == DateTimeOffset.MaxValue)
+    if (cache.LastFullGenerationEnd == DateTimeOffset.MaxValue)
     {
-        config = config with { LastFullGenerationEnd = finishTime };
-        await config.Save();
+        cache = cache with { LastFullGenerationEnd = finishTime };
+        await cache.Save(config);
     }
     // add additional files
     await AddAdditionalFiles(finishTime);
@@ -154,19 +156,19 @@ async Task UpdateEmailTable(RawCommit[] rawLogs)
     foreach (var c in rawLogs)
     {
         // populate email to author dict
-        if (!config.NameByEmail.ContainsKey(c.Author))
+        if (!cache.NameByEmail.ContainsKey(c.Author))
         {
-            config.NameByEmail[c.Author] = c.AuthorName;
+            cache.NameByEmail[c.Author] = c.AuthorName;
             logger.Info($"Added {c.AuthorName} to config");
         }
-        if (!config.NameByEmail.ContainsKey(c.Committer))
+        if (!cache.NameByEmail.ContainsKey(c.Committer))
         {
-            config.NameByEmail[c.Committer] = c.CommitterName;
+            cache.NameByEmail[c.Committer] = c.CommitterName;
             logger.Info($"Added {c.CommitterName} to config");
         }
     }
     // save email to author dict
-    await config.Save();
+    await cache.Save(config);
 }
 
 async Task CreateTargetCommit(Commit sourceCommit)
@@ -180,7 +182,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
 
     // switch to the target commit's parent
     var targetParents = sourceCommit.Parents
-        .Select(p => config.SourceCommitToTargetCommit[p])
+        .Select(p => cache.SourceCommitToTargetCommit[p])
         .ToArray();
     if (targetParents.Length == 0)
     {
@@ -221,7 +223,7 @@ async Task CreateTargetCommit(Commit sourceCommit)
                 }
             }
         });
-        var files = config.LastIncludeList.SelectMany(pattern => FindFiles(config.SourceDirectory, pattern)).ToArray();
+        var files = cache.LastIncludeList.SelectMany(pattern => FindFiles(config.SourceDirectory, pattern)).ToArray();
         // wait until files are deleted
         await deleteTask;
         foreach (var sourceFullName in files)
@@ -259,12 +261,12 @@ async Task CreateTargetCommit(Commit sourceCommit)
         targetCommit = await RunTargetGit($"commit-tree {mergeParentsOptions} -F - {targetCommit}^{{tree}}", commitMessage, environment);
         targetCommit = targetCommit.Trim();
     }
-
+    
     // save last commit id
     logger.Info($"Committed on target repository: {targetCommit}...");
-    config.SourceCommitToTargetCommit[sourceCommit.Id] = targetCommit;
-    config = config with { LastSourceCommit = sourceCommit.Id };
-    await config.Save();
+    cache.SourceCommitToTargetCommit[sourceCommit.Id] = targetCommit;
+    cache = cache with { LastSourceCommit = sourceCommit.Id };
+    await cache.Save(config);
 }
 
 async Task AddAdditionalFiles(DateTimeOffset finishTime)
@@ -301,14 +303,14 @@ async Task AddAdditionalFiles(DateTimeOffset finishTime)
     if (config.AutoGeneratedReadMeFileFormat is { } format)
     {
         string formatted;
-        var fullGenerationDuration = config.LastFullGenerationEnd - config.LastFullGenerationStart;
-        if (config.LastFullGenerationStart == startTime)
+        var fullGenerationDuration = cache.LastFullGenerationEnd - cache.LastFullGenerationStart;
+        if (cache.LastFullGenerationStart == startTime)
         {
-            formatted = string.Format(format, "/", "/", startTime, config.LastFullGenerationStart, fullGenerationDuration);
+            formatted = string.Format(format, "/", "/", startTime, cache.LastFullGenerationStart, fullGenerationDuration);
         }
         else
         {
-            formatted = string.Format(format, startTime, finishTime - startTime, config.LastFullGenerationStart, fullGenerationDuration);
+            formatted = string.Format(format, startTime, finishTime - startTime, cache.LastFullGenerationStart, fullGenerationDuration);
         }
         logger.Info($"Prepared autogenerated content {formatted}");
         // find readme file
@@ -401,14 +403,14 @@ string[] FindFiles(string directory, string pattern)
 
 async Task RestartTargetGitBranch()
 {
-    config = config with
+    cache = cache with
     {
         LastSourceCommit = string.Empty,
         SourceCommitToTargetCommit = new(),
         LastFullGenerationStart = startTime,
         LastFullGenerationEnd = DateTimeOffset.MaxValue,
     };
-    await config.Save();
+    await cache.Save(config);
 
     logger.Info($"Reset target repository main branch");
     var temporaryId = $"branch-{Guid.NewGuid():N}";
@@ -488,11 +490,11 @@ async Task<string> RunGit(string arguments, string directory, string? stdin, Dic
 }
 
 record Config(
+    string CacheFileName,
     string SourceDirectory,
     string TargetDirectory,
     string IncludeListFileName,
     string LastCommitFileName,
-    Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
     Dictionary<string, string> EmailMap,
     string SourceRemote,
@@ -503,10 +505,6 @@ record Config(
     string? AdditionalFilesDirectory,
     string? AdditionalFilesCommitMessage,
     string? AdditionalFilesAuthor,
-    string LastSourceCommit,
-    string[] LastIncludeList,
-    DateTimeOffset LastFullGenerationStart,
-    DateTimeOffset LastFullGenerationEnd,
     int? LimitCommitNumberForDebuggingPurposes = null,
     string? DebugIncludeListFullName = null)
 {
@@ -536,6 +534,7 @@ record Config(
                 throw new ArgumentException($"config field {name.Split('.').Last()} is required");
             }
         }
+        CheckRequiredField(loaded.CacheFileName);
         CheckRequiredField(loaded.SourceDirectory);
         CheckRequiredField(loaded.TargetDirectory);
         CheckRequiredField(loaded.IncludeListFileName);
@@ -547,11 +546,8 @@ record Config(
             SourceMainBranch = loaded.SourceMainBranch ?? "master",
             TargetRemote = loaded.TargetRemote ?? "origin",
             TargetMainBranch = loaded.TargetMainBranch ?? "main",
-            SourceCommitToTargetCommit = loaded.SourceCommitToTargetCommit ?? new(),
             NameByEmail = loaded.NameByEmail ?? new(),
             EmailMap = loaded.EmailMap ?? new(),
-            LastSourceCommit = loaded.LastSourceCommit ?? string.Empty,
-            LastIncludeList = loaded.LastIncludeList ?? Array.Empty<string>(),
         };
         return loaded;
     }
@@ -559,6 +555,40 @@ record Config(
     public Task Save()
     {
         return File.WriteAllTextAsync(FileName, JsonSerializer.Serialize(this, JsonOptions));
+    }
+}
+
+record Cache(
+    Dictionary<string, string> SourceCommitToTargetCommit,
+    Dictionary<string, string> NameByEmail,
+    string LastSourceCommit,
+    string[] LastIncludeList,
+    DateTimeOffset LastFullGenerationStart,
+    DateTimeOffset LastFullGenerationEnd)
+{
+    public static async Task<Cache> Load(Config config)
+    {
+        var content = await File.ReadAllTextAsync(config.CacheFileName);
+        var loaded = JsonSerializer.Deserialize<Cache>(content, Config.JsonOptions)!;
+        // fix null fields
+        loaded = loaded with
+        {
+            SourceCommitToTargetCommit = loaded.SourceCommitToTargetCommit ?? new(),
+            NameByEmail = loaded.NameByEmail ?? new(),
+            LastSourceCommit = loaded.LastSourceCommit ?? string.Empty,
+            LastIncludeList = loaded.LastIncludeList ?? Array.Empty<string>(),
+        };
+        // override cache from config
+        foreach (var (key, value) in config.NameByEmail)
+        {
+            loaded.NameByEmail[key] = value;
+        }
+        return loaded;
+    }
+
+    public Task Save(Config config)
+    {
+        return File.WriteAllTextAsync(config.CacheFileName, JsonSerializer.Serialize(this, Config.JsonOptions));
     }
 }
 
