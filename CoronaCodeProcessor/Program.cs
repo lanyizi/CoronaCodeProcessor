@@ -58,6 +58,10 @@ try
     logger.Info("Pushing to remote");
     await RunTargetGit($"push -f -u {config.TargetRemote} {config.TargetMainBranch}");
     logger.Info("Done");
+    // clean garbage
+    await RunTargetGit("git reflog expire --expire-unreachable=now --all");
+    await RunTargetGit("git gc --prune=now");
+    logger.Info("Garbage cleaned");
 
     return 0;
 }
