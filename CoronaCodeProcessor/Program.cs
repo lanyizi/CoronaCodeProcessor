@@ -240,27 +240,40 @@ async Task CreateTargetCommit(Commit sourceCommit)
 string[] FindFiles(string directory, string pattern)
 {
     logger.Trace($"Searching files in {directory} with pattern {pattern}");
-    if (!Directory.Exists(directory))
-    {
-        return Array.Empty<string>();
-    }
+    var enumerateOptions = new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive };
     var wildcards = new[] { '*', '?' };
+    var slashes = new[] { '/', '\\' };
     var wildcardIndex = pattern.IndexOfAny(wildcards);
     if (wildcardIndex != -1)
     {
-        var slashes = new[] { '/', '\\' };
+        // handle directories in the pattern before the wildcard.
+        var slashBeforeWildcard = pattern.LastIndexOfAny(slashes, wildcardIndex);
+        if (slashBeforeWildcard != -1)
+        {
+            // split pattern into two parts,
+            // one for searching directories without wildcard
+            // and another for searching childrens with wildcard in found directory.
+            var childPattern = pattern[(slashBeforeWildcard + 1)..];
+            var directoryPattern = pattern[..slashBeforeWildcard];
+            return Directory.EnumerateDirectories(directory, directoryPattern, enumerateOptions)
+                .SelectMany(d => FindFiles(d, childPattern))
+                .ToArray();
+        }
+        // handle directories in the pattern after the wildcard.
         var slashAfterWildcard = pattern.IndexOfAny(slashes, wildcardIndex);
         if (slashAfterWildcard != -1)
         {
-            // split pattern into three parts
+            // split pattern into two parts,
+            // one for searching directories with wildcard,
+            // and another for searching childrens in found directory.
             var childPattern = pattern[(slashAfterWildcard + 1)..];
             var directoryPattern = pattern[..slashAfterWildcard];
-            return Directory.EnumerateDirectories(directory, directoryPattern)
+            return Directory.EnumerateDirectories(directory, directoryPattern, enumerateOptions)
                 .SelectMany(d => FindFiles(d, childPattern))
                 .ToArray();
         }
     }
-    return Directory.GetFiles(directory, pattern).ToArray();
+    return Directory.GetFiles(directory, pattern, enumerateOptions).ToArray();
 }
 
 async Task RestartTargetGitBranch()
