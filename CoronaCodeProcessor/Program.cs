@@ -225,10 +225,10 @@ async Task CreateTargetCommit(Commit sourceCommit)
     var environment = new Dictionary<string, string>
     {
         ["GIT_AUTHOR_NAME"] = config.NameByEmail[sourceCommit.Author],
-        ["GIT_AUTHOR_EMAIL"] = "<>",
+        ["GIT_AUTHOR_EMAIL"] = config.EmailMap.GetValueOrDefault(sourceCommit.Author, "<>"),
         ["GIT_AUTHOR_DATE"] = sourceCommit.AuthorDate,
         ["GIT_COMMITTER_NAME"] = config.NameByEmail[sourceCommit.Committer],
-        ["GIT_COMMITTER_EMAIL"] = "<>",
+        ["GIT_COMMITTER_EMAIL"] = config.EmailMap.GetValueOrDefault(sourceCommit.Committer, "<>"),
         ["GIT_COMMITTER_DATE"] = sourceCommit.CommitDate,
     };
     await RunTargetGit($"add -A");
@@ -384,6 +384,7 @@ record Config(
     string LastCommitFileName,
     Dictionary<string, string> SourceCommitToTargetCommit,
     Dictionary<string, string> NameByEmail,
+    Dictionary<string, string> EmailMap,
     string SourceRemote,
     string SourceMainBranch,
     string TargetRemote,
@@ -432,6 +433,7 @@ record Config(
             TargetMainBranch = loaded.TargetMainBranch ?? "main",
             SourceCommitToTargetCommit = loaded.SourceCommitToTargetCommit ?? new(),
             NameByEmail = loaded.NameByEmail ?? new(),
+            EmailMap = loaded.EmailMap ?? new(),
             LastSourceCommit = loaded.LastSourceCommit ?? string.Empty,
             LastIncludeList = loaded.LastIncludeList ?? Array.Empty<string>(),
         };
